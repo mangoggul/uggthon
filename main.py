@@ -191,10 +191,13 @@ async def emotion_predict_base64(request: EmotionPredictRequest):
         # 1. Base64 이미지 데이터 가져오기
         image_base64 = request.image_base64
 
-        # 2. Base64 이미지를 PIL 이미지로 변환
-        image = Image.open(io.BytesIO(base64.b64decode(image_base64)))
+        # 2. Base64 데이터의 초반 부분 제거
+        if image_base64.startswith("data:image"):
+            image_base64 = image_base64.split(",")[1]
 
-        # 3. 이미지 전처리
+        # 3. Base64 이미지를 PIL 이미지로 변환
+        image = Image.open(io.BytesIO(base64.b64decode(image_base64)))
+            # 3. 이미지 전처리
         inputs = processor(images=image, return_tensors="pt")
 
         # 4. 모델 추론

@@ -13,6 +13,7 @@ from langchain.memory import ConversationBufferMemory
 import pymysql
 from dotenv import load_dotenv
 import os
+import base64
 
 
 # FastAPI 앱 생성
@@ -155,8 +156,8 @@ async def generate_letter(request: DiaryRequest):
 
 
 
-def insert_emotion_into_db(user_id: int, emotion: str):
-    """diary 테이블에 user_id와 emotion 삽입"""
+def insert_emotion_and_image_into_db(user_id: int, emotion: str, image_base64: str):
+    """diary 테이블에 user_id, emotion, base64 이미지 삽입"""
     connection = None
     try:
         # MySQL 데이터베이스 연결
@@ -164,54 +165,51 @@ def insert_emotion_into_db(user_id: int, emotion: str):
 
         # 커서 생성 및 데이터 삽입
         with connection.cursor() as cursor:
-            query = "INSERT INTO diary (user_id, emotion) VALUES (%s, %s)"
-            cursor.execute(query, (user_id, emotion))
+            query = "INSERT INTO diary (user_id, emotion, base64) VALUES (%s, %s, %s)"
+            cursor.execute(query, (user_id, emotion, image_base64))
             connection.commit()  # 변경 사항 커밋
 
     except Exception as e:
         print(f"DB 연결 또는 데이터 삽입 실패: {e}")
-        raise HTTPException(status_code=500, detail="감정 데이터를 DB에 저장하는 데 실패했습니다.")
+        raise HTTPException(status_code=500, detail="데이터를 DB에 저장하는 데 실패했습니다.")
 
     finally:
         # 연결 닫기
         if connection:
             connection.close()
 
+class EmotionPredictRequest(BaseModel):
+    user_id: int
+    image_base64: str
 
-@app.post("/emotion_predict")
-async def emotion_predict(
-    user_id: int = Query(..., description="사용자 ID"),  # 쿼리 파라미터로 user_id 받기
-    file: UploadFile = File(...)
-):
+@app.post("/emotion_predict_base64/")
+async def emotion_predict_base64(request: EmotionPredictRequest):
     """
-    사용자의 user_id와 업로드된 이미지를 받아 감정 예측 결과를 반환하고 DB에 저장.
+    Base64 이미지를 받아 감정 분석 결과와 함께 DB에 저장.
     """
     try:
-        # 업로드된 이미지 읽기
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
+        # 1. Base64 이미지 데이터 가져오기
+        image_base64 = request.image_base64
 
-        # 이미지 전처리
+        # 2. Base64 이미지를 PIL 이미지로 변환
+        image = Image.open(io.BytesIO(base64.b64decode(image_base64)))
+
+        # 3. 이미지 전처리
         inputs = processor(images=image, return_tensors="pt")
 
-        # 모델 추론
+        # 4. 모델 추론
         with torch.no_grad():
             outputs = model(**inputs)
+            logits = outputs.logits
+            predicted_class_idx = torch.argmax(logits).item()
+            label = model.config.id2label[predicted_class_idx]
 
-        # 결과 처리
-        logits = outputs.logits
-        predicted_class_idx = torch.argmax(logits).item()
-        label = model.config.id2label[predicted_class_idx]
+        # 5. DB에 Base64와 감정 결과 저장
+        insert_emotion_and_image_into_db(request.user_id, label, image_base64)
 
-        # 감정 데이터를 DB에 저장
-        try:
-            insert_emotion_into_db(user_id=user_id, emotion=label)
-        except Exception as db_error:
-            print(f"DB 저장 실패: {db_error}")
-            return JSONResponse(content={"error": "DB 저장 중 문제가 발생했습니다."}, status_code=500)
-
-        # 결과 반환
-        return JSONResponse(content={"user_id": user_id, "predicted_class": label})
+        # 6. 결과 반환
+        return {"user_id": request.user_id, "predicted_class": label}
 
     except Exception as e:
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        print(f"오류 발생: {e}")
+        raise HTTPException(status_code=500, detail="예측 또는 저장 중 오류가 발생했습니다.")

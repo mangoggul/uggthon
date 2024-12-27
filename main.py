@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 from PIL import Image
 import torch
@@ -20,6 +21,15 @@ load_dotenv()
 
 # FastAPI 앱 생성
 app = FastAPI()
+
+# CORS 설정
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 모든 출처 허용 (특정 도메인만 허용하려면 여기에 추가)
+    allow_credentials=True,
+    allow_methods=["*"],  # 모든 HTTP 메서드 허용
+    allow_headers=["*"],  # 모든 HTTP 헤더 허용
+)
 
 # 모델 및 프로세서 로드
 processor = AutoImageProcessor.from_pretrained("trpakov/vit-face-expression")
